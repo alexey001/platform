@@ -1568,6 +1568,18 @@ public class Settings implements Cloneable {
         this.disableInnerFollows = disableInnerFollows;
     }
 
+    // when set, the recursion cycle check tuple keeps ALL iterate keys (old behavior) : a path-like key
+    // (bound in the step to an expression referencing its own previous value) then makes the check vacuous
+    private boolean disableRecursionCycleKeysHeuristic = false;
+
+    public boolean isDisableRecursionCycleKeysHeuristic() {
+        return disableRecursionCycleKeysHeuristic;
+    }
+
+    public void setDisableRecursionCycleKeysHeuristic(boolean disableRecursionCycleKeysHeuristic) {
+        this.disableRecursionCycleKeysHeuristic = disableRecursionCycleKeysHeuristic;
+    }
+
     private boolean disableGroupNotJoinsWheres = false;
 
     public boolean isDisableGroupNotJoinsWheres() {

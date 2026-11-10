@@ -6,6 +6,7 @@ import lsfusion.base.Result;
 import lsfusion.base.col.MapFact;
 import lsfusion.base.col.SetFact;
 import lsfusion.base.col.interfaces.immutable.ImMap;
+import lsfusion.base.col.interfaces.immutable.ImOrderSet;
 import lsfusion.base.col.interfaces.immutable.ImRevMap;
 import lsfusion.base.col.interfaces.immutable.ImSet;
 import lsfusion.base.col.interfaces.mutable.add.MAddSet;
@@ -17,7 +18,10 @@ import lsfusion.server.data.expr.BaseExpr;
 import lsfusion.server.data.expr.Expr;
 import lsfusion.server.data.expr.classes.IsClassType;
 import lsfusion.server.data.expr.join.classes.InnerExprFollows;
+import lsfusion.server.data.expr.join.where.KeyEqual;
+import lsfusion.server.data.expr.join.where.KeyEquals;
 import lsfusion.server.data.expr.key.KeyExpr;
+import lsfusion.server.data.expr.key.ParamExpr;
 import lsfusion.server.data.expr.query.RecursiveTable;
 import lsfusion.server.data.query.build.Join;
 import lsfusion.server.data.query.compile.CompiledQuery;
@@ -35,6 +39,7 @@ import lsfusion.server.data.where.Where;
 import lsfusion.server.data.where.classes.ClassExprWhere;
 import lsfusion.server.logics.property.Property;
 import lsfusion.server.physics.admin.Settings;
+import lsfusion.server.physics.admin.log.ServerLoggers;
 
 import java.util.function.BiFunction;
 
@@ -162,6 +167,45 @@ public class RecursiveJoin extends QueryJoin<KeyExpr, RecursiveJoin.Query, Recur
 
     public StatKeys<KeyExpr> getStatKeys(StatType type, StatKeys<KeyExpr> pushStatKeys) {
         return getRecClassesStats(type, pushStatKeys).first.second;
+    }
+
+    // heuristic : excludes "path-like" iterate keys (a key bound by an equality to an expression referencing
+    // the previous value of that same key, e.g. path = $path + '/' + index) from the cycle check tuple.
+    // Such a pair (key, path) never repeats (the path strictly grows), so keeping the key in the check makes
+    // it vacuous : cycles are not detected (no sentinel marking, CYCLES NO constraint never fires) and the
+    // recursion diverges geometrically on cyclic data, bounded only by the infinite level guard.
+    @IdentityLazy
+    public ImOrderSet<KeyExpr> getCycleCheckKeys() {
+        ImRevMap<KeyExpr, KeyExpr> mapIterate = getMapIterate();
+        ImOrderSet<KeyExpr> iterateKeys = mapIterate.keys().toOrderSet();
+        if(iterateKeys.size() < 2 || Settings.get().isDisableRecursionCycleKeysHeuristic()) // nothing to exclude / heuristic disabled - keep old behavior
+            return iterateKeys;
+
+        MAddSet<KeyExpr> mSelfDerived = SetFact.mAddSet();
+        KeyEquals stepKeyEquals = getStepWhere().getKeyEquals();
+        for(int j = 0, jSize = stepKeyEquals.size(); j < jSize; j++) {
+            KeyEqual keyEqual = stepKeyEquals.getKey(j);
+            for(int i = 0, size = keyEqual.keyExprs.size(); i < size; i++) {
+                ParamExpr equalKey = keyEqual.keyExprs.getKey(i);
+                if(equalKey instanceof KeyExpr) {
+                    KeyExpr prevKey = mapIterate.get((KeyExpr) equalKey);
+                    if(prevKey != null && keyEqual.keyExprs.getValue(i).hasKey(prevKey)) {
+                        mSelfDerived.add((KeyExpr) equalKey);
+                        break;
+                    }
+                }
+            }
+        }
+
+        ImSet<KeyExpr> selfDerived = mSelfDerived.immutableCopy();
+        if(!selfDerived.isEmpty()) {
+            ImOrderSet<KeyExpr> cycleKeys = iterateKeys.removeOrderIncl(selfDerived);
+            if(!cycleKeys.isEmpty()) { // degenerate : everything is self-derived - keep old behavior
+                ServerLoggers.sqlLogger.debug("recursion cycle check by " + cycleKeys + ", self-derived keys excluded : " + selfDerived);
+                return cycleKeys;
+            }
+        }
+        return iterateKeys;
     }
 
     public boolean isOnlyInitial() {

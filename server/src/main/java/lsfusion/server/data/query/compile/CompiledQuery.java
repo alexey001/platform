@@ -1833,7 +1833,7 @@ public class CompiledQuery<K,V> extends ImmutableObject {
                 Expr rowKeys = null; ArrayClass rowType = null; Expr rowSource = null;
                 final boolean needRow = cyclePossible && (!isLogical || useRecursionFunction);
                 if(needRow) {
-                    rowKeys = ConcatenateExpr.create(mapIterate.keys().toOrderSet());
+                    rowKeys = ConcatenateExpr.create(innerJoin.getCycleCheckKeys()); // excluding self-derived (path-like) keys, see RecursiveJoin.getCycleCheckKeys
                     rowType = ArrayClass.get(rowKeys.getType(innerJoin.getClassWhere())); // classWhere а не initialWhere, чтобы общий тип был и не было проблем с cast'ом ConcatenateType'ов
                     propTypes = propTypes.addExcl(rowPath, rowType);
 
